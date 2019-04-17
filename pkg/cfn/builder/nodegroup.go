@@ -107,33 +107,40 @@ func (n *NodeGroupResourceSet) newResource(name string, resource interface{}) *g
 }
 
 func (n *NodeGroupResourceSet) addResourcesForNodeGroup() error {
-	lc := &gfn.AWSAutoScalingLaunchConfiguration{
-		IamInstanceProfile: n.instanceProfile,
-		SecurityGroups:     n.securityGroups,
-		ImageId:            gfn.NewString(n.spec.AMI),
-		InstanceType:       gfn.NewString(n.spec.InstanceType),
-		UserData:           n.userData,
+	launchTemplateData := &gfn.AWSEC2LaunchTemplate_LaunchTemplateData{
+		IamInstanceProfile: &gfn.AWSEC2LaunchTemplate_IamInstanceProfile{
+			Arn: n.instanceProfile,
+		},
+		SecurityGroups: n.securityGroups,
+		ImageId:        gfn.NewString(n.spec.AMI),
+		InstanceType:   gfn.NewString(n.spec.InstanceType),
+		UserData:       n.userData,
 	}
+
 	if api.IsEnabled(n.spec.SSH.Allow) && api.IsSetAndNonEmptyString(n.spec.SSH.PublicKeyName) {
-		lc.KeyName = gfn.NewString(*n.spec.SSH.PublicKeyName)
+		launchTemplateData.KeyName = gfn.NewString(*n.spec.SSH.PublicKeyName)
 	}
-	if n.spec.PrivateNetworking {
-		lc.AssociatePublicIpAddress = gfn.False()
-	} else {
-		lc.AssociatePublicIpAddress = gfn.True()
-	}
+	// if n.spec.PrivateNetworking {
+	// 	lc.AssociatePublicIpAddress = gfn.False()
+	// } else {
+	// 	lc.AssociatePublicIpAddress = gfn.True()
+	// }
 	if n.spec.VolumeSize > 0 {
-		lc.BlockDeviceMappings = []gfn.AWSAutoScalingLaunchConfiguration_BlockDeviceMapping{
+		launchTemplateData.BlockDeviceMappings = []gfn.AWSEC2LaunchTemplate_BlockDeviceMapping{
 			{
 				DeviceName: gfn.NewString("/dev/xvda"),
-				Ebs: &gfn.AWSAutoScalingLaunchConfiguration_BlockDevice{
+				Ebs: &gfn.AWSEC2LaunchTemplate_Ebs{
 					VolumeSize: gfn.NewInteger(n.spec.VolumeSize),
 					VolumeType: gfn.NewString(n.spec.VolumeType),
 				},
 			},
 		}
 	}
-	refLC := n.newResource("NodeLaunchConfig", lc)
+	launchTemplateName := gfn.MakeFnSubString(fmt.Sprintf("${%s}", gfn.StackName))
+	n.newResource("NodeGroupLaunchTemplate", &gfn.AWSEC2LaunchTemplate{
+		LaunchTemplateName: launchTemplateName,
+		LaunchTemplateData: launchTemplateData,
+	})
 	// currently goformation type system doesn't allow specifying `VPCZoneIdentifier: { "Fn::ImportValue": ... }`,
 	// and tags don't have `PropagateAtLaunch` field, so we have a custom method here until this gets resolved
 	var vpcZoneIdentifier interface{}
@@ -190,9 +197,9 @@ func (n *NodeGroupResourceSet) addResourcesForNodeGroup() error {
 		)
 	}
 	ngProps := map[string]interface{}{
-		"LaunchConfigurationName": refLC,
-		"VPCZoneIdentifier":       vpcZoneIdentifier,
-		"Tags":                    tags,
+		"LaunchTemplateName": launchTemplateName,
+		"VPCZoneIdentifier":  vpcZoneIdentifier,
+		"Tags":               tags, // TODO: make part of LT
 	}
 	if n.spec.DesiredCapacity != nil {
 		ngProps["DesiredCapacity"] = fmt.Sprintf("%d", *n.spec.DesiredCapacity)
